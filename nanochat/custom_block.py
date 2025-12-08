@@ -89,24 +89,34 @@ class CustomBlock(nn.Module):
         # Softmax to get attention weights A
         A = F.softmax(attn_logits, dim=-1)  # (B, H, Tq, Tk)
 
-        # Resolvent: (A + I)^-1 @ V instead of A @ V
+        # Step 1: Standard attention with residual
+        attn_out = torch.matmul(A, v)  # (B, H, Tq, D)
+        attn_out = attn_out.transpose(1, 2).contiguous().view(B, Tq, -1)
+        attn_out = self.c_proj(attn_out)
+        x_after_attn = x[:, -Tq:, :] + attn_out  # x = x + attn(x)
+
+        # Step 2: Resolvent (replaces MLP) - reproject x into heads for the solve
+        x_heads = x_after_attn.view(B, Tq, self.n_head, self.head_dim).transpose(1, 2)  # (B, H, Tq, D)
+
         I = torch.eye(Tk, device=x.device, dtype=A.dtype)
-        A_plus_I = A + I  # (B, H, Tq, Tk) + (Tk, Tk) - but this only works when Tq == Tk
+        A_plus_I = A + I
 
         if Tq == Tk:
-            # Square system: solve (A + I) @ y = v
-            y = torch.linalg.solve(A_plus_I, v)  # (B, H, T, D)
+            # Square system: solve (A + I) @ y = x_heads
+            y = torch.linalg.solve(A_plus_I, x_heads)
         else:
             # Inference: build full matrix with identity for prefix rows
             full_A = torch.eye(Tk, device=x.device, dtype=A.dtype).unsqueeze(0).unsqueeze(0)
             full_A = full_A.expand(B, self.n_head, -1, -1).clone()
             full_A[:, :, -Tq:, :] = A_plus_I
-            y_full = torch.linalg.solve(full_A, v)
+            # Pad x_heads to Tk length for the solve
+            x_padded = torch.zeros(B, self.n_head, Tk, self.head_dim, device=x.device, dtype=x_heads.dtype)
+            x_padded[:, :, -Tq:, :] = x_heads
+            y_full = torch.linalg.solve(full_A, x_padded)
             y = y_full[:, :, -Tq:, :]
 
-        # Reassemble heads and project
+        # Reassemble heads
         y = y.transpose(1, 2).contiguous().view(B, Tq, -1)
-        y = self.c_proj(y)
 
-        return x[:, -Tq:, :] + y  # Residual connection
+        return y
 
