@@ -63,9 +63,11 @@ echo "Starting training on $(hostname) with MASTER_ADDR=$MASTER_ADDR:$MASTER_POR
 echo "Using network interface: $GLOO_SOCKET_IFNAME"
 
 # Run distributed training
+# Reduced device_batch_size to 4 to fit in 40GB A100 memory
+# Gradient accumulation will automatically handle reaching total_batch_size
 torchrun \
     --standalone \
     --nproc_per_node=1 \
-    -m scripts.base_train --depth=12
+    -m scripts.base_train --depth=12 --device_batch_size=4
 
 echo "Job finished at $(date)"
