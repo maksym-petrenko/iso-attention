@@ -6,7 +6,8 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-@torch.compile
+# Temporarily disabled for HPC compatibility - torch.compile requires nvcc
+# @torch.compile
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
